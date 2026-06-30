@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "framer-motion": "^11.1.7",
     "lucide-react": "^0.435.0",
+    "multer": "^2.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "socket.io": "^4.7.5",

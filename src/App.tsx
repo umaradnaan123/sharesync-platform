@@ -27,7 +27,7 @@ import {
 import io from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const BACKEND_URL = 'http://localhost:5000';
+const BACKEND_URL = window.location.protocol + '//' + window.location.hostname + ':5000';
 let socket: any;
 
 interface ClipboardItem {
@@ -166,6 +166,52 @@ export default function App() {
     socket.on('clipboard-updated', (history: ClipboardItem[]) => {
       setClipboardHistory(history);
       showNotification('Universal clipboard synchronized');
+    });
+
+    socket.on('file-uploaded', (fileItem: any) => {
+      const log = {
+        id: fileItem.id,
+        name: fileItem.name,
+        size: formatBytes(fileItem.size),
+        date: fileItem.date,
+        type: 'file',
+        category: 'Documents',
+        hash: fileItem.hash,
+        url: fileItem.url,
+        status: 'completed'
+      };
+      setRecentTransfers(prev => {
+        const exists = prev.some(item => item.id === fileItem.id);
+        if (exists) return prev;
+        const updated = [log, ...prev];
+        localStorage.setItem('sharesync_history', JSON.stringify(updated));
+        return updated;
+      });
+      showNotification(`New file received: ${fileItem.name}`);
+    });
+
+    socket.on('files-updated', (files: any[]) => {
+      setRecentTransfers(prev => {
+        const merged = [...prev];
+        files.forEach(f => {
+          const log = {
+            id: f.id,
+            name: f.name,
+            size: formatBytes(f.size),
+            date: f.date,
+            type: 'file',
+            category: 'Documents',
+            hash: f.hash,
+            url: f.url,
+            status: 'completed'
+          };
+          if (!merged.some(item => item.id === f.id)) {
+            merged.unshift(log);
+          }
+        });
+        localStorage.setItem('sharesync_history', JSON.stringify(merged));
+        return merged;
+      });
     });
 
     socket.on('comments-updated', ({ fileId, comments }: { fileId: string; comments: Comment[] }) => {
@@ -325,6 +371,32 @@ export default function App() {
       if (response.success) {
         setRoomCode(pairCode);
         setPeerConnected(true);
+        if (response.files) {
+          setRecentTransfers(prev => {
+            const merged = [...prev];
+            response.files.forEach((f: any) => {
+              const log = {
+                id: f.id,
+                name: f.name,
+                size: formatBytes(f.size),
+                date: f.date,
+                type: 'file',
+                category: 'Documents',
+                hash: f.hash,
+                url: f.url,
+                status: 'completed'
+              };
+              if (!merged.some(item => item.id === f.id)) {
+                merged.unshift(log);
+              }
+            });
+            localStorage.setItem('sharesync_history', JSON.stringify(merged));
+            return merged;
+          });
+        }
+        if (response.clipboard) {
+          setClipboardHistory(response.clipboard);
+        }
         showNotification('Connected successfully!');
       } else {
         showNotification(response.error || 'Failed to join');
@@ -420,31 +492,52 @@ export default function App() {
           }
         }, 400);
       } else {
-        let progress = 0;
-        const interval = setInterval(() => {
-          progress += 20;
-          setUploadQueue(prev => prev.map(item => 
-            item.id === fileId ? { ...item, progress, speed: '1.5 MB/s' } : item
-          ));
-          if (progress >= 100) {
-            clearInterval(interval);
-            setUploadQueue(prev => prev.map(item => 
-              item.id === fileId ? { ...item, status: 'completed' } : item
-            ));
-            const log = {
-              id: fileId,
-              name: file.name,
-              size: formatBytes(file.size),
-              date: new Date().toISOString().split('T')[0],
-              type: 'file',
-              category: 'Documents',
-              hash: simulatedHash,
-              status: 'completed'
-            };
-            saveHistory([log, ...recentTransfers]);
-            showNotification(`${file.name} uploaded to storage links!`);
-          }
-        }, 300);
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('roomCode', roomCode);
+        formData.append('fileHash', simulatedHash);
+
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${BACKEND_URL}/api/upload`, true);
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const progress = Math.round((event.loaded / event.total) * 100);
+              setUploadQueue(prev => prev.map(item => 
+                item.id === fileId ? { ...item, progress, speed: '1.8 MB/s' } : item
+              ));
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status === 200) {
+              const response = JSON.parse(xhr.responseText);
+              setUploadQueue(prev => prev.map(item => 
+                item.id === fileId ? { ...item, status: 'completed' } : item
+              ));
+              const log = {
+                id: response.file.id,
+                name: response.file.name,
+                size: formatBytes(response.file.size),
+                date: response.file.date,
+                type: 'file',
+                category: 'Documents',
+                hash: response.file.hash,
+                url: response.file.url,
+                status: 'completed'
+              };
+              saveHistory([log, ...recentTransfers]);
+              showNotification(`${file.name} uploaded successfully!`);
+            } else {
+              showNotification('Upload failed');
+            }
+          };
+
+          xhr.send(formData);
+        } catch (e) {
+          showNotification('Upload error');
+        }
       }
     }
 
@@ -915,6 +1008,18 @@ export default function App() {
                             </div>
                             <div className="flex items-center gap-4">
                               <span className="font-mono opacity-60 text-[10px]">{file.size}</span>
+                              {file.url && (
+                                <a 
+                                  href={file.url} 
+                                  download={file.name} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="p-1 text-slate-400 hover:text-emerald-500 transition"
+                                  title="Download File"
+                                >
+                                  <UploadCloud className="w-3.5 h-3.5 rotate-180" />
+                                </a>
+                              )}
                               <button onClick={() => setSelectedFileForPreview(file)} className="p-1 text-slate-400 hover:text-indigo-500 transition"><Eye className="w-3.5 h-3.5" /></button>
                               <button 
                                 onClick={() => {

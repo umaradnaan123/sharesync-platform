@@ -5,6 +5,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,7 +20,19 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 }
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-const activeRooms = new Map(); // roomCode -> { peerIdA, peerIdB, clipboard: [], auditLogs: [], comments: {} }
+// Configure multer storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
+
+const activeRooms = new Map(); // roomCode -> { peerIdA, peerIdB, clipboard: [], auditLogs: [], comments: {}, files: [] }
 const filesMetadata = new Map();
 
 app.post('/api/files/metadata', (req, res) => {
@@ -41,6 +54,34 @@ app.post('/api/files/metadata', (req, res) => {
   res.json({ success: true, metadata });
 });
 
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  const { roomCode, fileHash } = req.body;
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  const room = activeRooms.get(roomCode);
+  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  const fileItem = {
+    id: Math.random().toString(36).substring(2, 9),
+    name: req.file.originalname,
+    size: req.file.size,
+    url: fileUrl,
+    hash: fileHash || 'unknown',
+    date: new Date().toISOString().split('T')[0],
+    category: 'Documents'
+  };
+
+  if (room) {
+    if (!room.files) room.files = [];
+    room.files.unshift(fileItem);
+    room.auditLogs.push(`File ${req.file.originalname} uploaded to workspace`);
+    io.to(roomCode).emit('file-uploaded', fileItem);
+    io.to(roomCode).emit('workspace-logs', room.auditLogs);
+  }
+
+  res.json({ success: true, file: fileItem });
+});
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] }
@@ -56,6 +97,7 @@ io.on('connection', (socket) => {
       peerIdA: socket.id,
       peerIdB: null,
       clipboard: [],
+      files: [],
       auditLogs: [`Workspace initialized by owner (${socket.id.substring(0,4)})`],
       comments: {}
     });
@@ -69,17 +111,15 @@ io.on('connection', (socket) => {
     if (!room) {
       return callback({ error: 'Session not found' });
     }
-    if (room.peerIdB && room.peerIdB !== socket.id) {
-      // For shared workspaces, we can relax P2P two-device limits for room membership
-      // but let's assign the secondary slot or just keep it simple
-    }
     room.peerIdB = socket.id;
     socket.join(code);
     room.auditLogs.push(`Member joined session (${socket.id.substring(0,4)})`);
     
     io.to(room.peerIdA).emit('peer-connected', { peerId: socket.id });
     io.to(code).emit('workspace-logs', room.auditLogs);
-    callback({ success: true, logs: room.auditLogs });
+    io.to(code).emit('files-updated', room.files || []);
+    io.to(code).emit('clipboard-updated', room.clipboard || []);
+    callback({ success: true, logs: room.auditLogs, files: room.files || [], clipboard: room.clipboard || [] });
   });
 
   // Real-time Universal Clipboard synchronization
