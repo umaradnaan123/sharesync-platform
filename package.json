@@ -1,18 +1,37 @@
 {
-  "name": "sharesync-monorepo",
+  "name": "sharesync-platform",
   "version": "1.0.0",
-  "description": "Root of ShareSync Workspace",
-  "private": true,
+  "description": "Secure Cross-Platform File Sharing Platform",
+  "type": "module",
   "scripts": {
-    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend",
-    "dev:backend": "npm run dev --prefix backend",
-    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "nodemon server.js",
+    "dev:frontend": "vite",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "build:frontend": "npm run build --prefix frontend",
-    "build:backend": "echo 'No build step required for backend'",
-    "build": "npm run build:frontend"
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "framer-motion": "^11.1.7",
+    "lucide-react": "^0.435.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~6.0.2",
+    "vite": "^5.4.11"
   }
 }
